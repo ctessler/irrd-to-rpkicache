@@ -1,0 +1,43 @@
+From de0d90ce6d900d8565307500a7934ea64b327094 Mon Sep 17 00:00:00 2001
+From: Corey Tessler <corey@n00b.net>
+Date: Sat, 22 Oct 2011 13:46:09 -0400
+Subject: [PATCH 2/2] Small cleanup from -e option
+
+---
+ utils/print_roa/print_roa.c |    6 +++---
+ 1 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/utils/print_roa/print_roa.c b/utils/print_roa/print_roa.c
+index 657d2a5..361af1a 100644
+--- a/utils/print_roa/print_roa.c
++++ b/utils/print_roa/print_roa.c
+@@ -243,7 +243,7 @@ dump_cert(const char *fname)
+     rv = 1;
+     goto done;
+   }
+-  
++
+   /* Extract the CMS */
+   cms = d2i_CMS_bio(der_roa, NULL);
+   if (!cms) {
+@@ -275,7 +275,7 @@ dump_cert(const char *fname)
+   /* rewrite the suffix of the file */
+   dest_file = strdup(fname);
+   memcpy(dest_file + strlen(dest_file) - 4, ".pem", 4);
+-  
++
+   rv = BIO_write_filename(cert_file, dest_file);
+   if (rv <= 0) {
+     rv = 1;
+@@ -298,7 +298,7 @@ done:
+   if (cert_file) {
+     BIO_free(cert_file);
+   }
+-  
++
+   if (dest_file) {
+     free(dest_file);
+   }
+-- 
+1.7.3.4
+

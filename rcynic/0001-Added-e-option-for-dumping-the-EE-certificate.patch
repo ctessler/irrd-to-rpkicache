@@ -1,0 +1,176 @@
+From ab70b073f95b6210c0a4729257e4aa4e69a5fa33 Mon Sep 17 00:00:00 2001
+From: Corey Tessler <corey@n00b.net>
+Date: Sat, 22 Oct 2011 13:45:23 -0400
+Subject: [PATCH 1/2] Added -e option for dumping the EE certificate
+
+---
+ utils/print_roa/print_roa.c |  123 +++++++++++++++++++++++++++++++++++++++++--
+ 1 files changed, 119 insertions(+), 4 deletions(-)
+
+diff --git a/utils/print_roa/print_roa.c b/utils/print_roa/print_roa.c
+index 7783a18..657d2a5 100644
+--- a/utils/print_roa/print_roa.c
++++ b/utils/print_roa/print_roa.c
+@@ -210,6 +210,103 @@ static void addr_expand(unsigned char *addr,
+  */
+ #define addr_prefixlen(bs) ((int) ((bs)->length * 8 - ((bs)->flags & 7)))
+ 
++
++/**
++ * Extracts the EE certificate from a ROA
++ *
++ * @param[in] fname the filename of the DER encoded ROA.
++ *
++ * @return zero upon success, non-zero upon failure.
++ */
++static int
++dump_cert(const char *fname)
++{
++  CMS_ContentInfo *cms;
++  BIO *der_roa, *cert_file;
++  STACK_OF(CMS_SignerInfo) *signer_infos;
++  STACK_OF(X509) *certs;
++  X509 *ee_cert;
++  char *dest_file;
++  int rv;
++
++  cms = NULL;
++  der_roa = cert_file = NULL;
++  signer_infos = NULL;
++  certs = NULL;
++  ee_cert = NULL;
++  dest_file = NULL;
++  rv = 0;
++
++  /* Read in the ROA */
++  der_roa = BIO_new_file(fname, "r");
++  if (!der_roa) {
++    rv = 1;
++    goto done;
++  }
++  
++  /* Extract the CMS */
++  cms = d2i_CMS_bio(der_roa, NULL);
++  if (!cms) {
++    rv = 1;
++    goto done;
++  }
++
++  /* No longer need the ROA file open */
++  BIO_free(der_roa);
++  der_roa = NULL;
++
++  /* Pull the EE certificate from the CMS */
++  certs = CMS_get1_certs(cms);
++  if (!certs) {
++    rv = 1;
++    goto done;
++  }
++
++  /* There should be only one certificate per ROA */
++  ee_cert = sk_X509_value(certs, 0);
++
++  /* Open the destination file */
++  cert_file = BIO_new(BIO_s_file());
++  if (!cert_file) {
++    rv = 1;
++    goto done;
++  }
++
++  /* rewrite the suffix of the file */
++  dest_file = strdup(fname);
++  memcpy(dest_file + strlen(dest_file) - 4, ".pem", 4);
++  
++  rv = BIO_write_filename(cert_file, dest_file);
++  if (rv <= 0) {
++    rv = 1;
++    goto done;
++  }
++
++  /* Write the certificate to the certificate file */
++  PEM_write_bio_X509(cert_file, ee_cert);
++
++done:
++  /* Clean up */
++  if (cms) {
++    CMS_ContentInfo_free(cms);
++  }
++
++  if (der_roa) {
++    BIO_free(der_roa);
++  }
++
++  if (cert_file) {
++    BIO_free(cert_file);
++  }
++  
++  if (dest_file) {
++    free(dest_file);
++  }
++
++  return rv;
++}
++
++
+ /*
+  * Read ROA (CMS object) in DER format.
+  *
+@@ -388,13 +485,15 @@ static ROA *read_roa(const char *filename, const int print_cms, const int print_
+ int main (int argc, char *argv[])
+ {
+   int result = 0, brief = 0, signingtime = 0, c;
++  int dumpcert = 0;
+   char *jane = argv[0];
++  char *roa;
+   ROA *r;
+ 
+   OpenSSL_add_all_algorithms();
+   ERR_load_crypto_strings();
+ 
+-  while ((c = getopt(argc, argv, "bs")) != -1) {
++  while ((c = getopt(argc, argv, "bse")) != -1) {
+     switch (c) {
+     case 'b':
+       brief = 1;
+@@ -402,9 +501,12 @@ int main (int argc, char *argv[])
+     case 's':
+       signingtime = 1;
+       break;
++    case 'e':
++      dumpcert = 1;
++      break;
+     case '?':
+     default:
+-      fprintf(stderr, "usage: %s [-b] [-s] ROA [ROA...]\n", jane);
++      fprintf(stderr, "usage: %s [-b] [-s] [-e] ROA [ROA...]\n", jane);
+       return 1;
+     }
+   }
+@@ -413,9 +515,22 @@ int main (int argc, char *argv[])
+   argv += optind;
+ 
+   while (argc-- > 0) {
+-    r = read_roa(*argv++, 0, 1, !brief, brief, signingtime);
+-    result |=  r == NULL;
++    roa = *argv++;
++    r = read_roa(roa, 0, 1, !brief, brief, signingtime);
++    if (!r) {
++      result = 1;
++      break;
++    }
+     ROA_free(r);
++
++    if (dumpcert) {
++      result = dump_cert(roa);
++      if (result) {
++	break;
++      }
++    }
++    
+   }
++
+   return result;
+ }
+-- 
+1.7.3.4
+

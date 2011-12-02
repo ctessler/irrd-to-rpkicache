@@ -1,0 +1,381 @@
+From 49061082eef11237065cd57c8e2dbc91585019d6 Mon Sep 17 00:00:00 2001
+From: Corey Tessler <corey@n00b.net>
+Date: Sat, 19 Nov 2011 12:33:00 -0500
+Subject: [PATCH] Communicates with the RPKI Cache
+
+---
+ src/programs/IRRd/Makefile   |    2 +-
+ src/programs/IRRd/commands.c |   50 ++++++++
+ src/programs/IRRd/rpkic.c    |  253 ++++++++++++++++++++++++++++++++++++++++++
+ src/programs/IRRd/rpkic.h    |   11 ++
+ 4 files changed, 315 insertions(+), 1 deletions(-)
+ create mode 100644 src/programs/IRRd/rpkic.c
+ create mode 100644 src/programs/IRRd/rpkic.h
+
+diff --git a/src/programs/IRRd/Makefile b/src/programs/IRRd/Makefile
+index 48cad00..a68f10c 100644
+--- a/src/programs/IRRd/Makefile
++++ b/src/programs/IRRd/Makefile
+@@ -7,7 +7,7 @@ include ../../Make.include
+ 
+ GOAL   = irrd
+ 
+-OBJS   = main.o telnet.o scan.o config.o commands.o database.o update.o mirror.o uii_commands.o journal.o indicies.o rpsl_commands.o route.o hash_spec.o templates.o irrd_util.o mirrorstatus.o statusfile.o atomic_trans.o $(MRTLIB) $(CFGLIB)
++OBJS   = main.o telnet.o scan.o config.o commands.o database.o update.o mirror.o uii_commands.o journal.o indicies.o rpsl_commands.o route.o hash_spec.o templates.o irrd_util.o mirrorstatus.o statusfile.o atomic_trans.o rpkic.o $(MRTLIB) $(CFGLIB)
+ 
+ IRRD_LIBS = -L../atomic_ops -latomic_ops -L../compat -lcompat
+ 
+diff --git a/src/programs/IRRd/commands.c b/src/programs/IRRd/commands.c
+index 3fdd409..4a8c1dc 100644
+--- a/src/programs/IRRd/commands.c
++++ b/src/programs/IRRd/commands.c
+@@ -84,6 +84,7 @@ int irr_set_sources (irr_connection_t *irr, char *sources, int mode);
+ int irr_set_ALL_sources (irr_connection_t *irr, int mode); 
+ void irr_more_all (irr_connection_t *irr, prefix_t *prefix, int mode);
+ void irr_ripewhois(irr_connection_t *irr);
++void irr_rpki(irr_connection_t *irr);
+ void irr_m_command (irr_connection_t *irr);
+ void irr_d_command (irr_connection_t *irr);
+ void irr_inversequery (irr_connection_t *irr, enum IRR_OBJECTS type, char *key);
+@@ -249,6 +250,9 @@ void irr_process_command (irr_connection_t * irr) {
+     irr_ripewhois(irr);
+     /* need to clear flags */
+     irr->ripe_flags = 0;
++
++    /* Fetch RPKI Data */
++    irr_rpki(irr);
+     return;      
+   }
+ 
+@@ -839,6 +843,52 @@ void irr_ripewhois (irr_connection_t *irr) {
+   LL_Destroy (irr->ll_answer);
+ }
+ 
++
++static void delete_answer (final_answer_t *tmp) {
++  Destroy (tmp->buf);
++  Destroy (tmp);
++}
++
++/*
++ * irr_rpki
++ *
++ * Presents the RPKI information across the irr connection.
++ *
++ * irr - the irr connection, expecting the prefix to be stored in
++ *     irr->cp 
++ */
++void irr_rpki (irr_connection_t *irr) {
++  char *msg;
++  int len;
++  final_answer_t *answer;
++
++  msg = rpkic_matches(irr->cp);
++  if (!msg) {
++    return;
++  }
++  len = strlen(msg);
++
++  if (!irr->ll_final_answer) {
++    irr->ll_final_answer = LL_Create(LL_DestroyFunction, delete_answer, 0);
++  }
++
++
++  answer = New (final_answer_t);
++  answer->buf = malloc(len + 1);
++  answer->ptr = answer->buf;
++
++  memcpy(answer->ptr, msg, len);
++  answer->ptr += len;
++  free(msg);
++
++  LL_Add(irr->ll_final_answer, answer);
++
++  irr_write_buffer_flush(irr);
++
++  return;
++}
++
++
+ void show_6as_answer (irr_connection_t *irr, char *key) {
+   irr_database_t *db;
+   int empty_answer = 1;
+diff --git a/src/programs/IRRd/rpkic.c b/src/programs/IRRd/rpkic.c
+new file mode 100644
+index 0000000..1d040a6
+--- /dev/null
++++ b/src/programs/IRRd/rpkic.c
+@@ -0,0 +1,253 @@
++/*
++ * file: rpkic.c
++ *
++ * Functions related to working with an RPKI cache.
++ */
++#include "rpkic.h"
++#include <arpa/inet.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <netinet/in.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/types.h>
++#include <sys/socket.h>
++#include <unistd.h>
++
++/* Reusable buffer for rpkic functions. */
++#define RPKIC_BUFFSIZE 4096
++static char rpkic_buff[RPKIC_BUFFSIZE];
++
++/*
++ * Connects to the RPKI cache server
++ *
++ * returns a socket connected to the RPKI cache server upon success, less than
++ * zero otherwise.
++ */
++int
++rpkic_connect(void)
++{
++	struct sockaddr_in saddr;
++	int rv, sock;
++
++	sock = socket(AF_INET, SOCK_STREAM, 0);
++	if (sock < 0) {
++		goto failure;
++	}
++	
++	bzero(&saddr, sizeof(saddr));
++	saddr.sin_family = AF_INET;
++	saddr.sin_port = htons(RPKI_CACHE_PORT);
++
++	rv = inet_pton(AF_INET, RPKI_CACHE_ADDR, &saddr.sin_addr);
++	if (rv <= 0) {
++		goto failure;
++	}
++
++	rv = connect(sock, (struct sockaddr *) &saddr, sizeof(saddr));
++	if (rv != 0) {
++		goto failure;
++	}
++
++	if (rv == -1) {
++		goto failure;
++	}
++	return (sock);
++
++failure:	
++	if (sock > 0) {
++		close(sock);
++	}
++	return (-1);
++}
++
++/*
++ * Determines the last time the RPKI cache was updated.
++ *
++ * sock - the socket connected to the RPKI cache
++ *
++ * returns NULL if there is a problem, otherwise the string version of the
++ * time. It is the responsibility of the caller to free this value.
++ */
++char *
++rpkic_get_updated(int sock)
++{
++	#define UPDATE_PFX "Last updated: "
++	int rv, nread;
++	char *time_start, *time_end, *time_str;
++	char *bufp;
++	fd_set read_set;
++	struct timeval tout;
++	
++	tout.tv_sec = 3;
++	tout.tv_usec = 0;
++	
++	FD_ZERO(&read_set);
++	FD_SET(sock, &read_set);
++
++	time_start = time_end = NULL;
++	bufp = rpkic_buff;
++	while (1) {
++		rv = select(sock + 1, &read_set, NULL, NULL, &tout);
++		/* Only one descriptor in the set */
++		if (rv <= 0) {
++			/* Timeout or error */
++			break;
++		}
++		
++		nread = recv(sock, bufp, (RPKIC_BUFFSIZE - (bufp - rpkic_buff)),
++		    MSG_DONTWAIT);
++		if (nread == 0) {
++			break;
++		}
++
++		if (nread == -1 && EWOULDBLOCK) {
++			if (!time_end) {
++				continue;
++			}
++			break;
++		}
++
++		if (nread == -1) {
++			break;
++		}
++		bufp += nread;
++
++		
++		if (!time_start) {
++			time_start = strstr(rpkic_buff, UPDATE_PFX);
++		}
++		if (!time_end && time_start) {
++			time_end = strstr(time_start, "\nrpkic>");
++		}
++		if (time_end) {
++			break;
++		}
++	}
++	if (!time_start) {
++		return (NULL);
++	}
++	time_start += strlen(UPDATE_PFX);
++
++	time_str = strndup(time_start, time_end - time_start);
++
++	#undef UPDATE_PFX
++	return (time_str);
++}
++
++/*
++ * Searches for the RPKI matches.
++ *
++ * sock - the socket connected to the RPKI cache
++ * network - the network query
++ *
++ * returns NULL if there is a problem, otherwise the string version of the
++ * time. It is the responsibility of the caller to free this value.
++ */
++char *
++rpkic_get_matches(int sock, const char *network)
++{
++	int rv, nread;
++	char *bufp, *msg, *command;
++	fd_set read_set;
++	struct timeval tout;
++	
++	tout.tv_sec = 3;
++	tout.tv_usec = 0;
++	
++	FD_ZERO(&read_set);
++	FD_SET(sock, &read_set);
++
++	snprintf(rpkic_buff, RPKIC_BUFFSIZE, "network {%s}\n", network);
++	command = strdup(rpkic_buff);
++	/* This will block hooray! */
++	send(sock, command, strlen(command), 0);
++	free(command);
++
++	bufp = rpkic_buff;
++	while (1) {
++		rv = select(sock + 1, &read_set, NULL, NULL, &tout);
++		/* Only one descriptor in the set */
++		if (rv <= 0) {
++			/* Timeout or error */
++			goto failure;
++		}
++		
++		nread = recv(sock, bufp, (RPKIC_BUFFSIZE - (bufp - rpkic_buff)),
++		    MSG_DONTWAIT);
++		if (nread == 0) {
++			break;
++		}
++
++		if (nread == -1 && EWOULDBLOCK) {
++			continue;
++		}
++
++		if (nread == -1) {
++			goto failure;
++		}
++		bufp += nread;
++	}
++
++	msg = strdup(rpkic_buff);
++	
++	return (msg);
++failure:
++	return (NULL);
++}
++
++
++/*
++ * Fetches the RPKI Cache matches for the given network.
++ *
++ * network - the string representation of the network. 
++ *
++ * returns upon failure NULL is returned, otherwise the string that can be used
++ * as part of a whois response. It is the  responsibility of the caller to
++ * free this value when they are done with it. 
++ */
++char *
++rpkic_matches(const char *network)
++{
++	int sock;
++	char *msg, *updated, *matches;
++	msg = NULL;
++
++	if (!network) {
++		goto failure;
++	}
++
++	sock = rpkic_connect();
++	if (sock <= 0) {
++		goto failure;
++	}
++
++	updated = rpkic_get_updated(sock);
++	if (!updated) {
++		goto failure;
++	}
++	msg = strdup("\nRPKI Information:\nCache Updated:\t");
++	msg = realloc(msg, strlen(msg) + strlen(updated) + 1);
++	msg = strcat(msg, updated);
++	free(updated);
++	updated = NULL;
++
++	matches = rpkic_get_matches(sock, network);
++	if (!matches) {
++		goto failure;
++	}
++	msg = realloc(msg, strlen(msg) + strlen(matches) + 1);
++	msg = strcat(msg, matches);
++	free(updated);
++	matches = NULL;
++
++	close(sock);
++
++	return (msg);
++
++failure:
++	if (msg) {
++		free(msg);
++	}
++	return (NULL);
++}
+diff --git a/src/programs/IRRd/rpkic.h b/src/programs/IRRd/rpkic.h
+new file mode 100644
+index 0000000..94ca640
+--- /dev/null
++++ b/src/programs/IRRd/rpkic.h
+@@ -0,0 +1,11 @@
++#ifndef RPKIC_H
++#define RPKIC_H
++
++#include <stddef.h>
++
++#define RPKI_CACHE_PORT 4096
++#define RPKI_CACHE_ADDR "198.108.63.124"
++
++char *rpki_matches(const char* network);
++
++#endif /* RPKIC_H */
+-- 
+1.7.3.4
+

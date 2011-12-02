@@ -1,0 +1,25 @@
+#!/bin/bash
+
+#
+# Find all the der encoded certs and convert them to PEM.
+#
+
+for i in $(find . -name "*.cer")
+do
+	topem $i ${i/.cer/.pem}
+done
+
+for i in $(find . -name "*.pem") 
+do
+	ok=`openssl verify -CAfile APNIC.pem -untrusted 8BDFC7DED5FD11DCB14CF4B1A703F9B7/*.pem \
+		$i`
+
+	echo $ok
+	if ! echo "$ok" | grep error 
+	then
+	 	echo "$i is valid"
+	else
+	 	echo "$i is invalid"
+	fi
+done
+	

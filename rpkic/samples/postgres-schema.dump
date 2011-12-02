@@ -1,0 +1,171 @@
+--
+-- PostgreSQL database dump
+--
+
+SET statement_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = off;
+SET check_function_bodies = false;
+SET client_min_messages = warning;
+SET escape_string_warning = off;
+
+SET search_path = public, pg_catalog;
+
+SET default_tablespace = '';
+
+SET default_with_oids = false;
+
+--
+-- Name: cert; Type: TABLE; Schema: public; Owner: postgres; Tablespace: 
+--
+
+CREATE TABLE cert (
+    cert_id integer NOT NULL,
+    cert_name character varying(256),
+    cert_src_uri character varying(512),
+    cert_issue_date character varying(64),
+    cert_expiry_date character varying(64)
+);
+
+
+ALTER TABLE public.cert OWNER TO postgres;
+
+--
+-- Name: cert_cert_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE cert_cert_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.cert_cert_id_seq OWNER TO postgres;
+
+--
+-- Name: cert_cert_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE cert_cert_id_seq OWNED BY cert.cert_id;
+
+
+--
+-- Name: roa; Type: TABLE; Schema: public; Owner: postgres; Tablespace: 
+--
+
+CREATE TABLE roa (
+    roa_pfx cidr NOT NULL,
+    roa_as integer NOT NULL,
+    roa_state_id integer,
+    cert_id integer,
+    roa_pfx_len_max integer
+);
+
+
+ALTER TABLE public.roa OWNER TO postgres;
+
+--
+-- Name: roa_state; Type: TABLE; Schema: public; Owner: postgres; Tablespace: 
+--
+
+CREATE TABLE roa_state (
+    roa_state_id integer NOT NULL,
+    roa_state_name character varying(32),
+    roa_state_descr character varying(1024)
+);
+
+
+ALTER TABLE public.roa_state OWNER TO postgres;
+
+--
+-- Name: roa_state_roa_state_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE roa_state_roa_state_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.roa_state_roa_state_id_seq OWNER TO postgres;
+
+--
+-- Name: roa_state_roa_state_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE roa_state_roa_state_id_seq OWNED BY roa_state.roa_state_id;
+
+
+--
+-- Name: update; Type: TABLE; Schema: public; Owner: postgres; Tablespace: 
+--
+
+CREATE TABLE update (
+    last_update character varying(100)
+);
+
+
+ALTER TABLE public.update OWNER TO postgres;
+
+--
+-- Name: cert_id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE cert ALTER COLUMN cert_id SET DEFAULT nextval('cert_cert_id_seq'::regclass);
+
+
+--
+-- Name: roa_state_id; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE roa_state ALTER COLUMN roa_state_id SET DEFAULT nextval('roa_state_roa_state_id_seq'::regclass);
+
+
+--
+-- Name: cert_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres; Tablespace: 
+--
+
+ALTER TABLE ONLY cert
+    ADD CONSTRAINT cert_pkey PRIMARY KEY (cert_id);
+
+
+--
+-- Name: roa_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres; Tablespace: 
+--
+
+ALTER TABLE ONLY roa
+    ADD CONSTRAINT roa_pkey PRIMARY KEY (roa_pfx, roa_as);
+
+
+--
+-- Name: roa_state_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres; Tablespace: 
+--
+
+ALTER TABLE ONLY roa_state
+    ADD CONSTRAINT roa_state_pkey PRIMARY KEY (roa_state_id);
+
+
+--
+-- Name: roa_cert_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY roa
+    ADD CONSTRAINT roa_cert_id_fkey FOREIGN KEY (cert_id) REFERENCES cert(cert_id);
+
+
+--
+-- Name: roa_roa_state_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY roa
+    ADD CONSTRAINT roa_roa_state_id_fkey FOREIGN KEY (roa_state_id) REFERENCES roa_state(roa_state_id);
+
+
+--
+-- PostgreSQL database dump complete
+--
+

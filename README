@@ -1,0 +1,12 @@
+This project includes original source, and modifications to three
+separate projects; irrd, openssl, and rcynic. At the top level you
+will find the following directories.
+
+    irrd/
+    openssl/
+    rcynic/
+    rpkic/
+
+The last directory, rpkic, contains the original work done for this
+project. The other three contain the original source and patches
+required to work with the contents of the rpkic directory.

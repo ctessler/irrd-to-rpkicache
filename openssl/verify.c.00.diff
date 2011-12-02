@@ -1,0 +1,77 @@
+diff --git a/apps/verify.c b/apps/verify.c
+index 9163997..8eb2352 100644
+--- a/apps/verify.c
++++ b/apps/verify.c
+@@ -75,6 +75,42 @@ static int check(X509_STORE *ctx, char *file,
+ 		STACK_OF(X509_CRL) *crls, ENGINE *e);
+ static int v_verbose=0, vflags = 0;
+ 
++
++/**
++ * Appends the certificates found in fname to the certificate chain.
++ *
++ * @param[in] eng the openssl engine
++ * @param[in] chain the current certificate chain, NULL for a new chain.
++ * @param[in] fname file name of the certificate being added.
++ *
++ */
++STACK_OF(X509) *
++add_untrusted(ENGINE *eng, STACK_OF(X509) *chain, char *fname)
++{
++	STACK_OF(X509) * latest;
++
++	latest = load_certs(bio_err, fname, FORMAT_PEM, NULL, eng,
++	    "untrusted certificates");
++
++	if (!latest) {
++		BIO_printf(bio_err,
++		   "Error loading untrusted certificate file %s\n", fname);
++		return NULL;
++	}
++
++	if (!chain) {
++		return latest;
++	}
++
++	int i;
++	X509 *x509;
++	while (x509 = sk_X509_pop(latest)) {
++		sk_X509_push(chain, x509);
++	}
++
++	return chain;
++}
++
+ int MAIN(int, char **);
+ 
+ int MAIN(int argc, char **argv)
+@@ -107,6 +143,10 @@ int MAIN(int argc, char **argv)
+ 	if (!load_config(bio_err, NULL))
+ 		goto end;
+ 
++#ifndef OPENSSL_NO_ENGINE
++        e = setup_engine(bio_err, engine, 0);
++#endif
++
+ 	argc--;
+ 	argv++;
+ 	for (;;)
+@@ -134,6 +174,8 @@ int MAIN(int argc, char **argv)
+ 				{
+ 				if (argc-- < 1) goto end;
+ 				untfile= *(++argv);
++				untrusted = add_untrusted(e, untrusted, untfile);
++				untfile = NULL;
+ 				}
+ 			else if (strcmp(*argv,"-trusted") == 0)
+ 				{
+@@ -167,9 +209,6 @@ int MAIN(int argc, char **argv)
+ 			break;
+ 		}
+ 
+-#ifndef OPENSSL_NO_ENGINE
+-        e = setup_engine(bio_err, engine, 0);
+-#endif
+ 
+ 	if (vpm)
+ 		X509_STORE_set1_param(cert_ctx, vpm);
